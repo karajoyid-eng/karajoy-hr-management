@@ -1,0 +1,231 @@
+name: Build Karajoy HR Management APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build HR Management Debug APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install build tools
+        shell: bash
+        run: |
+          set -e
+          sudo apt-get update
+          sudo apt-get install -y unzip imagemagick rsync
+
+          curl -fsSL \
+            https://services.gradle.org/distributions/gradle-8.9-bin.zip \
+            -o /tmp/gradle.zip
+
+          sudo unzip -q /tmp/gradle.zip -d /opt
+          echo "/opt/gradle-8.9/bin" >> "$GITHUB_PATH"
+
+      - name: Prepare Android project and HR assets
+        shell: bash
+        run: |
+          set -e
+
+          test -f index.html || {
+            echo "ERROR: index.html tidak ada di root repository"
+            exit 1
+          }
+
+          mkdir -p app/src/main/assets
+          mkdir -p app/src/main/java/com/karajoy/hr
+          mkdir -p app/src/main/res/values
+          mkdir -p app/src/main/res/mipmap-mdpi
+          mkdir -p app/src/main/res/mipmap-hdpi
+          mkdir -p app/src/main/res/mipmap-xhdpi
+          mkdir -p app/src/main/res/mipmap-xxhdpi
+          mkdir -p app/src/main/res/mipmap-xxxhdpi
+
+          # Copy all website files and preserve relative folders
+          rsync -a \
+            --exclude='.git/' \
+            --exclude='.github/' \
+            --exclude='app/' \
+            --exclude='build/' \
+            --exclude='*.yml' \
+            --exclude='*.yaml' \
+            ./ app/src/main/assets/
+
+          # Use uploaded Karajoy launcher icon
+          if [ -f karajoy_icon.png ]; then
+            ICON="karajoy_icon.png"
+          else
+            echo "ERROR: karajoy_icon.png tidak ditemukan di root."
+            exit 1
+          fi
+
+          convert "$ICON" -resize 48x48 \
+            app/src/main/res/mipmap-mdpi/ic_launcher.png
+          convert "$ICON" -resize 72x72 \
+            app/src/main/res/mipmap-hdpi/ic_launcher.png
+          convert "$ICON" -resize 96x96 \
+            app/src/main/res/mipmap-xhdpi/ic_launcher.png
+          convert "$ICON" -resize 144x144 \
+            app/src/main/res/mipmap-xxhdpi/ic_launcher.png
+          convert "$ICON" -resize 192x192 \
+            app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+
+          cat > settings.gradle <<'EOF'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "KarajoyHRManagement"
+          include(":app")
+          EOF
+
+          cat > build.gradle <<'EOF'
+          plugins {
+              id 'com.android.application' version '8.7.3' apply false
+          }
+          EOF
+
+          cat > app/build.gradle <<'EOF'
+          plugins {
+              id 'com.android.application'
+          }
+
+          android {
+              namespace 'com.karajoy.hr'
+              compileSdk 35
+
+              defaultConfig {
+                  applicationId 'com.karajoy.hr'
+                  minSdk 23
+                  targetSdk 28
+                  versionCode 1
+                  versionName '1.0'
+              }
+          }
+          EOF
+
+          cat > app/src/main/res/values/styles.xml <<'EOF'
+          <resources>
+              <style name="AppTheme"
+                  parent="android:style/Theme.Material.Light.NoActionBar">
+                  <item name="android:colorAccent">#D4AF37</item>
+                  <item name="android:statusBarColor">#111111</item>
+                  <item name="android:navigationBarColor">#111111</item>
+              </style>
+          </resources>
+          EOF
+
+          cat > app/src/main/AndroidManifest.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.INTERNET" />
+
+              <application
+                  android:allowBackup="false"
+                  android:icon="@mipmap/ic_launcher"
+                  android:label="HR Management"
+                  android:theme="@style/AppTheme">
+
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          EOF
+
+          cat > app/src/main/java/com/karajoy/hr/MainActivity.java <<'EOF'
+          package com.karajoy.hr;
+
+          import android.app.Activity;
+          import android.os.Bundle;
+          import android.webkit.WebView;
+          import android.webkit.WebViewClient;
+          import android.webkit.WebChromeClient;
+          import android.webkit.WebSettings;
+
+          public class MainActivity extends Activity {
+              private WebView webView;
+
+              @Override
+              protected void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+
+                  webView = new WebView(this);
+
+                  WebSettings settings = webView.getSettings();
+                  settings.setJavaScriptEnabled(true);
+                  settings.setDomStorageEnabled(true);
+                  settings.setDatabaseEnabled(true);
+                  settings.setAllowFileAccess(true);
+                  settings.setAllowContentAccess(true);
+
+                  webView.setWebViewClient(new WebViewClient());
+                  webView.setWebChromeClient(new WebChromeClient());
+
+                  setContentView(webView);
+                  webView.loadUrl("file:///android_asset/index.html");
+              }
+
+              @Override
+              public void onBackPressed() {
+                  if (webView != null && webView.canGoBack()) {
+                      webView.goBack();
+                  } else {
+                      super.onBackPressed();
+                  }
+              }
+          }
+          EOF
+
+      - name: Verify packaged HR files
+        shell: bash
+        run: |
+          set -e
+          test -f app/src/main/assets/index.html
+          test -f app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+
+          echo "HTML entry point and launcher icon verified."
+          echo "Assets included:"
+          find app/src/main/assets -type f | head -100
+
+      - name: Build debug APK
+        run: gradle assembleDebug --no-daemon
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Karajoy-HR-Management-Debug-APK
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 14

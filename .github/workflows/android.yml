@@ -1,0 +1,218 @@
+name: Build Karajoy HR Management APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install Android build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y imagemagick unzip rsync
+          wget -q https://services.gradle.org/distributions/gradle-8.9-bin.zip
+          sudo unzip -q gradle-8.9-bin.zip -d /opt
+          echo "/opt/gradle-8.9/bin" >> "$GITHUB_PATH"
+
+      - name: Verify HR files
+        run: |
+          test -f Karajoy_HR_System_Opening_Video_AutoPlay_Fix.html
+          test -f karajoy_icon.png
+          echo "HR HTML and Karajoy icon found."
+
+      - name: Create Android project
+        run: |
+          mkdir -p app/src/main/assets
+          mkdir -p app/src/main/java/com/karajoy/hr
+          mkdir -p app/src/main/res/values
+
+          rsync -a ./ app/src/main/assets/ \
+            --exclude='.git/' \
+            --exclude='.github/' \
+            --exclude='app/' \
+            --exclude='build/' \
+            --exclude='*.yml' \
+            --exclude='*.yaml'
+
+          cp app/src/main/assets/Karajoy_HR_System_Opening_Video_AutoPlay_Fix.html \
+             app/src/main/assets/index.html
+
+          mkdir -p app/src/main/res/mipmap-mdpi
+          mkdir -p app/src/main/res/mipmap-hdpi
+          mkdir -p app/src/main/res/mipmap-xhdpi
+          mkdir -p app/src/main/res/mipmap-xxhdpi
+          mkdir -p app/src/main/res/mipmap-xxxhdpi
+
+          convert karajoy_icon.png -resize 48x48 \
+            app/src/main/res/mipmap-mdpi/ic_launcher.png
+          convert karajoy_icon.png -resize 72x72 \
+            app/src/main/res/mipmap-hdpi/ic_launcher.png
+          convert karajoy_icon.png -resize 96x96 \
+            app/src/main/res/mipmap-xhdpi/ic_launcher.png
+          convert karajoy_icon.png -resize 144x144 \
+            app/src/main/res/mipmap-xxhdpi/ic_launcher.png
+          convert karajoy_icon.png -resize 192x192 \
+            app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+
+          cat > settings.gradle <<'EOF'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+
+          rootProject.name = "KarajoyHRManagement"
+          include ':app'
+          EOF
+
+          cat > build.gradle <<'EOF'
+          plugins {
+              id 'com.android.application' version '8.7.3' apply false
+          }
+          EOF
+
+          cat > app/build.gradle <<'EOF'
+          plugins {
+              id 'com.android.application'
+          }
+
+          android {
+              namespace 'com.karajoy.hr'
+              compileSdk 35
+
+              defaultConfig {
+                  applicationId 'com.karajoy.hr'
+                  minSdk 23
+                  targetSdk 28
+                  versionCode 1
+                  versionName '1.0'
+              }
+          }
+          EOF
+
+          cat > app/src/main/res/values/styles.xml <<'EOF'
+          <resources>
+              <style name="AppTheme"
+                  parent="@android:style/Theme.Material.Light.NoActionBar">
+                  <item name="android:fontFamily">sans</item>
+                  <item name="android:colorAccent">#D4AF37</item>
+                  <item name="android:statusBarColor">#000000</item>
+                  <item name="android:navigationBarColor">#000000</item>
+              </style>
+          </resources>
+          EOF
+
+          cat > app/src/main/AndroidManifest.xml <<'EOF'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.INTERNET" />
+
+              <application
+                  android:label="Karajoy HR Management"
+                  android:theme="@style/AppTheme"
+                  android:icon="@mipmap/ic_launcher"
+                  android:usesCleartextTraffic="false">
+
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true">
+
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+
+                  </activity>
+              </application>
+          </manifest>
+          EOF
+
+          cat > app/src/main/java/com/karajoy/hr/MainActivity.java <<'EOF'
+          package com.karajoy.hr;
+
+          import android.app.Activity;
+          import android.os.Bundle;
+          import android.webkit.WebView;
+          import android.webkit.WebViewClient;
+          import android.webkit.WebSettings;
+          import android.graphics.Color;
+
+          public class MainActivity extends Activity {
+              private WebView webView;
+
+              @Override
+              protected void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+
+                  getWindow().setStatusBarColor(Color.BLACK);
+                  getWindow().setNavigationBarColor(Color.BLACK);
+
+                  webView = new WebView(this);
+
+                  WebSettings settings = webView.getSettings();
+                  settings.setJavaScriptEnabled(true);
+                  settings.setDomStorageEnabled(true);
+                  settings.setDatabaseEnabled(true);
+                  settings.setAllowFileAccess(true);
+                  settings.setAllowContentAccess(true);
+                  settings.setMediaPlaybackRequiresUserGesture(false);
+
+                  webView.setWebViewClient(new WebViewClient());
+                  setContentView(webView);
+
+                  webView.loadUrl("file:///android_asset/index.html");
+              }
+
+              @Override
+              public void onBackPressed() {
+                  if (webView != null && webView.canGoBack()) {
+                      webView.goBack();
+                  } else {
+                      super.onBackPressed();
+                  }
+              }
+          }
+          EOF
+
+      - name: Build debug APK
+        run: gradle assembleDebug --no-daemon
+
+      - name: Verify APK
+        run: |
+          test -f app/build/outputs/apk/debug/app-debug.apk
+          ls -lh app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Karajoy-HR-Management-Debug-APK
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14

@@ -11,6 +11,7 @@ permissions:
 
 jobs:
   build:
+    name: Build Android APK
     runs-on: ubuntu-latest
 
     steps:
@@ -23,25 +24,54 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y imagemagick rsync unzip
+          curl -fsSL https://services.gradle.org/distributions/gradle-8.9-bin.zip -o /tmp/gradle.zip
+          sudo unzip -q /tmp/gradle.zip -d /opt
+          echo "/opt/gradle-8.9/bin" >> "$GITHUB_PATH"
+
       - name: Prepare Android project
         shell: bash
         run: |
           set -e
 
-          mkdir -p app/src/main/java/com/karajoy/hr
+          test -f index.html || {
+            echo "ERROR: index.html tidak ditemukan di root repository"
+            exit 1
+          }
+
+          test -f karajoy-logo.png || {
+            echo "ERROR: Upload karajoy-logo.png ke root repository"
+            exit 1
+          }
+
           mkdir -p app/src/main/assets
+          mkdir -p app/src/main/java/com/karajoy/hr
           mkdir -p app/src/main/res/values
+          mkdir -p app/src/main/res/mipmap-mdpi
+          mkdir -p app/src/main/res/mipmap-hdpi
+          mkdir -p app/src/main/res/mipmap-xhdpi
+          mkdir -p app/src/main/res/mipmap-xxhdpi
+          mkdir -p app/src/main/res/mipmap-xxxhdpi
 
-          # Copy HTML and supporting root assets
-          find . -maxdepth 1 -type f ! -name '.*' \
-            ! -name '*.yml' ! -name '*.yaml' \
-            -exec cp {} app/src/main/assets/ \;
+          # Copy website files and preserve relative paths
+          rsync -a \
+            --exclude='.git/' \
+            --exclude='.github/' \
+            --exclude='app/' \
+            --exclude='*.yml' \
+            --exclude='*.yaml' \
+            --exclude='gradle.zip' \
+            ./ app/src/main/assets/
 
-          for item in images img css js assets; do
-            if [ -d "$item" ]; then
-              cp -r "$item" app/src/main/assets/
-            fi
-          done
+          # Generate launcher icons
+          convert karajoy-logo.png -resize '48x48' app/src/main/res/mipmap-mdpi/ic_launcher.png
+          convert karajoy-logo.png -resize '72x72' app/src/main/res/mipmap-hdpi/ic_launcher.png
+          convert karajoy-logo.png -resize '96x96' app/src/main/res/mipmap-xhdpi/ic_launcher.png
+          convert karajoy-logo.png -resize '144x144' app/src/main/res/mipmap-xxhdpi/ic_launcher.png
+          convert karajoy-logo.png -resize '192x192' app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
 
           cat > settings.gradle <<'EOF'
           pluginManagement {
@@ -87,12 +117,25 @@ jobs:
           }
           EOF
 
+          cat > app/src/main/res/values/styles.xml <<'EOF'
+          <resources>
+              <style name="AppTheme" parent="android:style/Theme.Material.Light.NoActionBar">
+                  <item name="android:colorAccent">#D4AF37</item>
+                  <item name="android:statusBarColor">#111111</item>
+                  <item name="android:navigationBarColor">#111111</item>
+              </style>
+          </resources>
+          EOF
+
           cat > app/src/main/AndroidManifest.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
               <uses-permission android:name="android.permission.INTERNET" />
               <application
-                  android:theme="@style/AppTheme"
+                  android:allowBackup="false"
+                  android:icon="@mipmap/ic_launcher"
                   android:label="Karajoy HR"
+                  android:theme="@style/AppTheme"
                   android:usesCleartextTraffic="true">
                   <activity
                       android:name=".MainActivity"
@@ -106,18 +149,6 @@ jobs:
           </manifest>
           EOF
 
-          cat > app/src/main/res/values/styles.xml <<'EOF'
-          <resources>
-              <style name="AppTheme" parent="android:style/Theme.Material.Light.NoActionBar">
-                  <item name="android:fontFamily">sans</item>
-                  <item name="android:colorAccent">#D4AF37</item>
-                  <item name="android:windowLightStatusBar">false</item>
-                  <item name="android:statusBarColor">#111111</item>
-                  <item name="android:navigationBarColor">#111111</item>
-              </style>
-          </resources>
-          EOF
-
           cat > app/src/main/java/com/karajoy/hr/MainActivity.java <<'EOF'
           package com.karajoy.hr;
 
@@ -127,8 +158,6 @@ jobs:
           import android.webkit.WebViewClient;
           import android.webkit.WebChromeClient;
           import android.webkit.WebSettings;
-          import android.view.View;
-          import android.view.WindowManager;
 
           public class MainActivity extends Activity {
               private WebView webView;
@@ -136,10 +165,6 @@ jobs:
               @Override
               protected void onCreate(Bundle savedInstanceState) {
                   super.onCreate(savedInstanceState);
-                  getWindow().setFlags(
-                      WindowManager.LayoutParams.FLAG_SECURE,
-                      WindowManager.LayoutParams.FLAG_SECURE
-                  );
 
                   webView = new WebView(this);
                   WebSettings settings = webView.getSettings();
@@ -166,13 +191,11 @@ jobs:
           }
           EOF
 
-      - name: Install Gradle
+      - name: Verify Android assets
         run: |
-          curl -fsSL \
-            https://services.gradle.org/distributions/gradle-8.9-bin.zip \
-            -o /tmp/gradle.zip
-          unzip -q /tmp/gradle.zip -d /tmp
-          echo "/tmp/gradle-8.9/bin" >> "$GITHUB_PATH"
+          test -f app/src/main/assets/index.html
+          test -f app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+          echo "HTML and launcher icon are ready."
 
       - name: Build debug APK
         run: gradle assembleDebug --no-daemon

@@ -39,24 +39,21 @@ jobs:
         run: |
           set -e
 
-          echo "Repository: $GITHUB_REPOSITORY"
-          echo "Branch: $GITHUB_REF"
-          echo "Commit: $GITHUB_SHA"
           echo "Repository files:"
-          ls -la
+          ls -lah
 
           HTML_FILE="Karajoy_HR_System_Opening_Video_AutoPlay_Fix.html"
           ICON_FILE="Karajoy_icon.png"
 
           if [[ ! -f "$HTML_FILE" ]]; then
-            echo "::error::HTML utama tidak ditemukan di root repository."
+            echo "::error::File HTML utama tidak ditemukan."
             find . -maxdepth 5 -type f -iname '*.html' \
               -not -path './.git/*' -print
             exit 1
           fi
 
           if [[ ! -f "$ICON_FILE" ]]; then
-            echo "::error::Ikon Karajoy tidak ditemukan di root repository."
+            echo "::error::File ikon Karajoy tidak ditemukan."
             find . -maxdepth 5 -type f -iname '*.png' \
               -not -path './.git/*' -print
             exit 1
@@ -65,7 +62,7 @@ jobs:
           echo "HTML_FILE=$HTML_FILE" >> "$GITHUB_ENV"
           echo "ICON_FILE=$ICON_FILE" >> "$GITHUB_ENV"
 
-          echo "HTML utama dan ikon berhasil ditemukan."
+          echo "File HTML dan ikon ditemukan."
 
       - name: Create Android project
         shell: bash
@@ -81,17 +78,17 @@ jobs:
             --exclude='.github/' \
             --exclude='app/' \
             --exclude='build/' \
+            --exclude='.gradle/' \
             --exclude='*.yml' \
-            --exclude='*.yaml'
+            --exclude='*.yaml' \
+            --exclude='gradle.properties'
 
           cp "app/src/main/assets/$HTML_FILE" \
              app/src/main/assets/index.html
 
-          mkdir -p app/src/main/res/mipmap-mdpi
-          mkdir -p app/src/main/res/mipmap-hdpi
-          mkdir -p app/src/main/res/mipmap-xhdpi
-          mkdir -p app/src/main/res/mipmap-xxhdpi
-          mkdir -p app/src/main/res/mipmap-xxxhdpi
+          for item in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+            mkdir -p "app/src/main/res/mipmap-$item"
+          done
 
           convert "$ICON_FILE" -resize 48x48 \
             app/src/main/res/mipmap-mdpi/ic_launcher.png
@@ -129,6 +126,12 @@ jobs:
           plugins {
               id 'com.android.application' version '8.7.3' apply false
           }
+          EOF
+
+          cat > gradle.properties <<'EOF'
+          org.gradle.jvmargs=-Xmx3g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8
+          org.gradle.workers.max=2
+          org.gradle.parallel=false
           EOF
 
           cat > app/build.gradle <<'EOF'
@@ -232,7 +235,13 @@ jobs:
           EOF
 
       - name: Build debug APK
-        run: gradle assembleDebug --no-daemon
+        env:
+          GRADLE_OPTS: "-Xmx3g -XX:MaxMetaspaceSize=1g"
+        run: |
+          gradle assembleDebug \
+            --no-daemon \
+            --max-workers=2 \
+            --stacktrace
 
       - name: Verify APK
         shell: bash

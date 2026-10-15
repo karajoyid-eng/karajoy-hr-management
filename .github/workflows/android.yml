@@ -157,7 +157,7 @@ jobs:
                   <item name="android:colorAccent">#D4AF37</item>
                   <item name="android:statusBarColor">#000000</item>
                   <item name="android:navigationBarColor">#000000</item>
-          </style>
+              </style>
           </resources>
           EOF
 
@@ -188,18 +188,30 @@ jobs:
 
           import android.app.Activity;
           import android.app.AlertDialog;
-          import android.os.Bundle;
+          import android.content.Context;
           import android.graphics.Color;
-          import android.webkit.WebView;
-          import android.webkit.WebViewClient;
+          import android.os.Bundle;
+          import android.os.Message;
+          import android.print.PrintAttributes;
+          import android.print.PrintManager;
+          import android.webkit.JavascriptInterface;
+          import android.webkit.JsPromptResult;
+          import android.webkit.JsResult;
           import android.webkit.WebChromeClient;
           import android.webkit.WebSettings;
-          import android.webkit.JsResult;
-          import android.webkit.JsPromptResult;
+          import android.webkit.WebView;
+          import android.webkit.WebViewClient;
           import android.widget.EditText;
+          import android.widget.FrameLayout;
+          import android.view.ViewGroup;
+
+          import java.util.ArrayList;
+          import java.util.List;
 
           public class MainActivity extends Activity {
               private WebView webView;
+              private FrameLayout rootLayout;
+              private final List<WebView> popupWebViews = new ArrayList<>();
 
               @Override
               protected void onCreate(Bundle savedInstanceState) {
@@ -208,40 +220,120 @@ jobs:
                   getWindow().setStatusBarColor(Color.BLACK);
                   getWindow().setNavigationBarColor(Color.BLACK);
 
-                  webView = new WebView(this);
-                  webView.setBackgroundColor(Color.WHITE);
+                  rootLayout = new FrameLayout(this);
+                  rootLayout.setBackgroundColor(Color.WHITE);
 
-                  WebSettings settings = webView.getSettings();
+                  webView = createWebView(false);
+
+                  rootLayout.addView(
+                      webView,
+                      new FrameLayout.LayoutParams(
+                          ViewGroup.LayoutParams.MATCH_PARENT,
+                          ViewGroup.LayoutParams.MATCH_PARENT
+                      )
+                  );
+
+                  setContentView(rootLayout);
+                  webView.loadUrl("file:///android_asset/index.html");
+              }
+
+              private WebView createWebView(boolean isPopup) {
+                  WebView view = new WebView(this);
+                  view.setBackgroundColor(Color.WHITE);
+
+                  WebSettings settings = view.getSettings();
                   settings.setJavaScriptEnabled(true);
                   settings.setDomStorageEnabled(true);
                   settings.setDatabaseEnabled(true);
                   settings.setAllowFileAccess(true);
                   settings.setAllowContentAccess(true);
                   settings.setJavaScriptCanOpenWindowsAutomatically(true);
+                  settings.setSupportMultipleWindows(true);
                   settings.setMediaPlaybackRequiresUserGesture(false);
 
-                  webView.setWebViewClient(new WebViewClient());
+                  view.addJavascriptInterface(
+                      new AndroidHost(view, isPopup),
+                      "AndroidHost"
+                  );
 
-                  webView.setWebChromeClient(new WebChromeClient() {
+                  view.setWebViewClient(new WebViewClient() {
+                      @Override
+                      public void onPageFinished(WebView finishedView, String url) {
+                          super.onPageFinished(finishedView, url);
+
+                          if (isPopup) {
+                              finishedView.evaluateJavascript(
+                                  "(function() {" +
+                                  " window.print = function() {" +
+                                  "   AndroidHost.printPage();" +
+                                  " };" +
+                                  " window.close = function() {" +
+                                  "   AndroidHost.closeWindow();" +
+                                  " };" +
+                                  "})();",
+                                  null
+                              );
+                          }
+                      }
+                  });
+
+                  view.setWebChromeClient(new WebChromeClient() {
+                      @Override
+                      public boolean onCreateWindow(
+                          WebView parent,
+                          boolean isDialog,
+                          boolean isUserGesture,
+                          Message resultMsg
+                      ) {
+                          WebView popup = createWebView(true);
+                          popupWebViews.add(popup);
+
+                          FrameLayout.LayoutParams params =
+                              new FrameLayout.LayoutParams(
+                                  ViewGroup.LayoutParams.MATCH_PARENT,
+                                  ViewGroup.LayoutParams.MATCH_PARENT
+                              );
+
+                          rootLayout.addView(popup, params);
+                          popup.bringToFront();
+
+                          WebView.WebViewTransport transport =
+                              (WebView.WebViewTransport) resultMsg.obj;
+
+                          transport.setWebView(popup);
+                          resultMsg.sendToTarget();
+                          return true;
+                      }
+
+                      @Override
+                      public void onCloseWindow(WebView window) {
+                          closePopup(window);
+                      }
+
                       @Override
                       public boolean onJsAlert(
-                              WebView view, String url,
-                              String message, JsResult result) {
+                          WebView sourceView,
+                          String url,
+                          String message,
+                          JsResult result
+                      ) {
                           new AlertDialog.Builder(MainActivity.this)
                               .setTitle("Karajoy HR")
                               .setMessage(message)
                               .setPositiveButton("OK",
                                   (dialog, which) -> result.confirm())
-                              .setOnCancelListener(
-                                  dialog -> result.cancel())
+                              .setOnCancelListener(dialog -> result.cancel())
                               .show();
                           return true;
                       }
 
                       @Override
                       public boolean onJsConfirm(
-                              WebView view, String url,
-                              String message, JsResult result) {
+                          WebView sourceView,
+                          String url,
+                          String message,
+                          JsResult result
+                      ) {
                           new AlertDialog.Builder(MainActivity.this)
                               .setTitle("Konfirmasi")
                               .setMessage(message)
@@ -249,21 +341,22 @@ jobs:
                                   (dialog, which) -> result.confirm())
                               .setNegativeButton("Batal",
                                   (dialog, which) -> result.cancel())
-                              .setOnCancelListener(
-                                  dialog -> result.cancel())
+                              .setOnCancelListener(dialog -> result.cancel())
                               .show();
                           return true;
                       }
 
                       @Override
                       public boolean onJsPrompt(
-                              WebView view, String url,
-                              String message, String defaultValue,
-                              JsPromptResult result) {
+                          WebView sourceView,
+                          String url,
+                          String message,
+                          String defaultValue,
+                          JsPromptResult result
+                      ) {
                           EditText input = new EditText(MainActivity.this);
                           input.setSingleLine(true);
-                          input.setText(
-                              defaultValue == null ? "" : defaultValue);
+                          input.setText(defaultValue == null ? "" : defaultValue);
 
                           new AlertDialog.Builder(MainActivity.this)
                               .setTitle("Karajoy HR")
@@ -271,24 +364,113 @@ jobs:
                               .setView(input)
                               .setPositiveButton("OK",
                                   (dialog, which) ->
-                                      result.confirm(
-                                          input.getText().toString()))
+                                      result.confirm(input.getText().toString()))
                               .setNegativeButton("Batal",
                                   (dialog, which) -> result.cancel())
-                              .setOnCancelListener(
-                                  dialog -> result.cancel())
+                              .setOnCancelListener(dialog -> result.cancel())
                               .show();
                           return true;
                       }
                   });
 
-                  setContentView(webView);
-                  webView.loadUrl("file:///android_asset/index.html");
+                  return view;
+              }
+
+              private void printWebView(WebView target) {
+                  if (target == null || isFinishing()) {
+                      return;
+                  }
+
+                  PrintManager printManager =
+                      (PrintManager) getSystemService(Context.PRINT_SERVICE);
+
+                  if (printManager == null) {
+                      new AlertDialog.Builder(MainActivity.this)
+                          .setTitle("Cetak slip gaji")
+                          .setMessage("Layanan cetak Android tidak tersedia.")
+                          .setPositiveButton("OK", null)
+                          .show();
+                      return;
+                  }
+
+                  String jobName = "Karajoy HR - Slip Gaji";
+
+                  PrintAttributes attributes =
+                      new PrintAttributes.Builder()
+                          .setMediaSize(PrintAttributes.MediaSize.ISO_A4)
+                          .setResolution(
+                              new PrintAttributes.Resolution(
+                                  "karajoy_hr",
+                                  "Karajoy HR",
+                                  300,
+                                  300
+                              )
+                          )
+                          .setMinMargins(PrintAttributes.Margins.NO_MARGINS)
+                          .build();
+
+                  printManager.print(
+                      jobName,
+                      target.createPrintDocumentAdapter(jobName),
+                      attributes
+                  );
+              }
+
+              private void closePopup(WebView popup) {
+                  if (popup == null) {
+                      return;
+                  }
+
+                  runOnUiThread(() -> {
+                      popupWebViews.remove(popup);
+
+                      if (popup.getParent() instanceof ViewGroup) {
+                          ((ViewGroup) popup.getParent()).removeView(popup);
+                      }
+
+                      popup.stopLoading();
+                      popup.removeJavascriptInterface("AndroidHost");
+                      popup.destroy();
+
+                      if (webView != null) {
+                          webView.bringToFront();
+                      }
+                  });
+              }
+
+              private class AndroidHost {
+                  private final WebView target;
+                  private final boolean popup;
+
+                  AndroidHost(WebView target, boolean popup) {
+                      this.target = target;
+                      this.popup = popup;
+                  }
+
+                  @JavascriptInterface
+                  public void printPage() {
+                      runOnUiThread(() -> printWebView(target));
+                  }
+
+                  @JavascriptInterface
+                  public void closeWindow() {
+                      if (popup) {
+                          closePopup(target);
+                      } else {
+                          runOnUiThread(() -> {
+                              if (webView != null && webView.canGoBack()) {
+                                  webView.goBack();
+                              }
+                          });
+                      }
+                  }
               }
 
               @Override
               public void onBackPressed() {
-                  if (webView != null && webView.canGoBack()) {
+                  if (!popupWebViews.isEmpty()) {
+                      closePopup(popupWebViews.get(popupWebViews.size() - 1));
+                  } else if (webView != null && webView.canGoBack()) {
                       webView.goBack();
                   } else {
                       super.onBackPressed();
@@ -297,10 +479,23 @@ jobs:
 
               @Override
               protected void onDestroy() {
+                  for (WebView popup : new ArrayList<>(popupWebViews)) {
+                      if (popup.getParent() instanceof ViewGroup) {
+                          ((ViewGroup) popup.getParent()).removeView(popup);
+                      }
+                      popup.stopLoading();
+                      popup.removeJavascriptInterface("AndroidHost");
+                      popup.destroy();
+                  }
+
+                  popupWebViews.clear();
+
                   if (webView != null) {
+                      webView.removeJavascriptInterface("AndroidHost");
                       webView.destroy();
                       webView = null;
                   }
+
                   super.onDestroy();
               }
           }
